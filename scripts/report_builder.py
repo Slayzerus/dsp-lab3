@@ -1,14 +1,14 @@
-"""Fill the course report template (DSP_TemplateReport.docx) and convert it to PDF with MS Word.
+"""Build a lab report on the course template (DSP_TemplateReport.docx) and convert it to PDF with MS Word.
 
-The title page of the template is kept (its fields are filled in); the placeholder body (sections 1-5) is
-replaced by the content given through the small API below. Used by scripts/make_report.py.
+The page set-up and styles of the course template are kept. Its placeholder content is replaced by a university
+title page (UBB logo, faculty, course, lab number, topic, date, student block pinned to the bottom of the page) and
+by the report body given through the small API below. Used by scripts/make_report.py.
 """
 import re
 import subprocess
 from pathlib import Path
 
 import docx
-from docx.enum.section import WD_ORIENT  # noqa: F401  (kept for completeness)
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
@@ -16,45 +16,62 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 FONT = "Times New Roman"
+TITLE_FONT = "Calibri"
 MONO = "Consolas"
+LOGO = Path(__file__).parent / "assets" / "ubb_logo.png"
 
-
-def _set_text(par, text, bold=None, size=14):
-    """Replace all runs of a paragraph by a single run (keeps paragraph formatting)."""
-    for r in list(par.runs):
-        r._element.getparent().remove(r._element)
-    run = par.add_run(text)
-    run.font.name, run.font.size = FONT, Pt(size)
-    if bold is not None:
-        run.bold = bold
-    return run
+FACULTY = "Wydział Budowy Maszyn i Informatyki"
+TEACHER = "prof. dr hab. Vasyl Martsenyuk"
+STUDENT = ("Radosław Skrzypczyński", "Nr indeksu: 29429", "Informatyka, studia II stopnia, niestacjonarne",
+           "1 semestr, grupa 2")
 
 
 class Report:
     def __init__(self, template, *, lab, date, topic, variant, course="Digital Signal Processing",
-                 student=("Radosław Skrzypczyński", "Informatyka II stopień,", "niestacjonarne,", "1 semestr,",
-                          "Gr. 2")):
+                 teacher=TEACHER, student=STUDENT, faculty=FACULTY, logo=LOGO):
         self.doc = docx.Document(template)
         self.fig_no = 0
         self.tab_no = 0
-        P = self.doc.paragraphs
-        # --- title page --------------------------------------------------------------------------------------
-        _set_text(P[1], f"Zajęcia: {course}")
-        par = P[17]
-        _set_text(par, f"Lab {lab}", bold=True)
-        _set_text(P[18], f"Date: {date}")
-        par = P[19]
-        _set_text(par, "Topic: ", bold=True)
-        r = par.add_run(f"„{topic}”")
-        r.font.name, r.font.size = FONT, Pt(14)
-        _set_text(P[20], f"Variant: {variant}", bold=True)
-        for par, txt in zip(P[29:34], student):
-            _set_text(par, txt)
-        # --- drop the placeholder body (everything after the student block) -----------------------------------
-        for par in P[34:]:
-            par._element.getparent().remove(par._element)
-        brk = self.doc.add_paragraph().add_run()
-        brk.add_break(WD_BREAK.PAGE)
+        body = self.doc.element.body
+        for el in list(body):                       # keep only the section properties of the template
+            if el.tag != qn("w:sectPr"):
+                body.remove(el)
+        self._title_page(lab, date, topic, variant, course, teacher, student, faculty, logo)
+
+    def _tline(self, text, size, bold=False, align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=4):
+        par = self.doc.add_paragraph()
+        par.alignment = align
+        pf = par.paragraph_format
+        pf.space_before, pf.space_after, pf.line_spacing = Pt(before), Pt(after), 1.08
+        for i, part in enumerate(text if isinstance(text, (list, tuple)) else [text]):
+            r = par.add_run(part)
+            r.font.name, r.font.size, r.bold = TITLE_FONT, Pt(size), bold
+            r._element.rPr.rFonts.set(qn("w:cs"), TITLE_FONT)
+        return par
+
+    def _title_page(self, lab, date, topic, variant, course, teacher, student, faculty, logo):
+        """University title page modelled on the UBB report layout."""
+        par = self.doc.add_paragraph()
+        par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        par.paragraph_format.space_before = Pt(18)
+        par.add_run().add_picture(str(logo), width=Cm(12.7))
+        self._tline(faculty, 14, bold=True, before=14)
+        self._tline(course, 20, bold=True, before=96)
+        self._tline(f"(Laboratorium № {lab})", 14, bold=True, before=2)
+        self._tline(f"Temat ćwiczenia: {topic}", 18, bold=True, before=44)
+        left = WD_ALIGN_PARAGRAPH.LEFT
+        self._tline(f"Data wykonania ćwiczenia: {date}", 16, align=left, before=28)
+        self._tline(f"Prowadzący: {teacher}", 16, align=left)
+        self._tline(f"Warianty: {variant}", 16, align=left)
+        # student block: one frame anchored to the bottom margin, independent of the length of the topic
+        for line in student:
+            par = self._tline(line, 16, align=left, after=6)
+            fr = OxmlElement("w:framePr")
+            for k, v in (("w", str(int(16.0/2.54*1440))), ("wrap", "around"), ("vAnchor", "margin"),
+                         ("hAnchor", "margin"), ("xAlign", "left"), ("yAlign", "bottom")):
+                fr.set(qn(f"w:{k}"), v)
+            par._p.get_or_add_pPr().insert(0, fr)
+        self.doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
 
     # ------------------------------------------------------------------------------------------------------------
     def _runs(self, par, text, size=12, italic=False):

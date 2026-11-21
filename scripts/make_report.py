@@ -45,7 +45,7 @@ def d1(v):
 rep = Report(TEMPLATE, lab=3, date=date.today().strftime("%d.%m.%Y"),
              topic="Digital filter design and analysis (FIR and IIR filters) and adaptive LMS filtering for noise "
                    "reduction",
-             variant="all variants 1–16")
+             variant="wszystkie (1–16)")
 
 # 1 ---------------------------------------------------------------------------------------------------------------
 rep.heading("1. Problem statement")
